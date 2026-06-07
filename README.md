@@ -8,10 +8,12 @@
 ## Screenshots
 
 ### Main Interface
-![Main Interface](screenshots/Screenshot%20(129).png)
+!<img width="1920" height="871" alt="Screenshot (129)" src="https://github.com/user-attachments/assets/a18addc4-f701-4da9-90af-c749edaf990a" />
+
 
 ### Discharge Summary Output
-![Discharge Summary Output](screenshots/Screenshot%20(130).png)
+!<img width="1912" height="873" alt="Screenshot (130)" src="https://github.com/user-attachments/assets/dc9ec53f-5ff1-4165-9c6c-e85c55e2c746" />
+
 
 ---
 
