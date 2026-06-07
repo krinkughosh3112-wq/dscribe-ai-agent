@@ -8,11 +8,11 @@
 ## Screenshots
 
 ### Main Interface
-!<img width="1920" height="871" alt="Screenshot (129)" src="https://github.com/user-attachments/assets/a18addc4-f701-4da9-90af-c749edaf990a" />
+<img width="1920" height="871" alt="Screenshot (129)" src="https://github.com/user-attachments/assets/a18addc4-f701-4da9-90af-c749edaf990a" />
 
 
 ### Discharge Summary Output
-!<img width="1912" height="873" alt="Screenshot (130)" src="https://github.com/user-attachments/assets/dc9ec53f-5ff1-4165-9c6c-e85c55e2c746" />
+<img width="1912" height="873" alt="Screenshot (130)" src="https://github.com/user-attachments/assets/dc9ec53f-5ff1-4165-9c6c-e85c55e2c746" />
 
 
 ---
@@ -230,25 +230,6 @@ dscribe-agent/
 
 ---
 
-## Assignment Requirements
-
-| Requirement | Status |
-|-------------|--------|
-| Real agent loop | ✅ |
-| PDF ingestion with OCR | ✅ |
-| No fabrication guardrail (3 layers) | ✅ |
-| Handle pending / missing data | ✅ |
-| Medication reconciliation | ✅ |
-| Handle conflicting information | ✅ |
-| Mock external tools | ✅ |
-| Tool retry / failure handling | ✅ |
-| Hard iteration cap | ✅ |
-| Step traces / observability | ✅ |
-| Part 2 — simulated reviewer | ✅ |
-| Part 2 — reward signal | ✅ |
-| Part 2 — learning mechanism | ✅ |
-| Part 2 — before/after metric | ✅ |
-| Part 2 — limitations discussed | ✅ |
 
 ---
 
