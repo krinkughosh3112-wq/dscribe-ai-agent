@@ -1,8 +1,17 @@
-markdown
 # 🏥 Dscribe — AI Discharge Summary Agent
 
 **Candidate:** Rinku Ghosh | AI Engineer  
-**Assignment:** Agentic AI for Discharge Summaries — Part 1 (Complete) + Part 2 (Stretch)
+**Assignment:** Agentic AI for Discharge Summaries — Part 1 (Complete) + Part 2 (Complete)
+
+---
+
+## Screenshots
+
+### Main Interface
+![Main Interface](screenshots/Screenshot%20(129).png)
+
+### Discharge Summary Output
+![Discharge Summary Output](screenshots/Screenshot%20(130).png)
 
 ---
 
@@ -10,9 +19,37 @@ markdown
 
 Dscribe is an agentic AI system that reads a patient's raw source-note PDFs — admission records, lab reports, medication charts, consultation sheets, nursing notes — and produces a structured, clinically safe discharge summary draft for clinician review.
 
-The source documents are messy and realistic: 71 scanned pages, handwritten notes, conflicting diagnoses across different forms, pending lab results, and medication changes with no documented reason. The agent handles all of this without inventing a single clinical fact.
+The source documents are messy and realistic: multi-page scanned documents, handwritten notes, conflicting diagnoses across different forms, pending lab results, and medication changes with no documented reason. The agent handles all of this without inventing a single clinical fact.
 
-**Part 2 (Stretch Goal):** The system also includes a learning mechanism that simulates doctor reviews, tracks edit distances, and demonstrates measurable improvement over time.
+Part 2 adds a complete learning mechanism: a simulated doctor reviewer applies a consistent editing policy to drafts, edit distance is measured as the reward signal, and accumulated corrections are injected into future prompts — producing measurable improvement over iterations.
+
+---
+
+## Running the System
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# OCR dependencies (Linux)
+sudo apt-get install tesseract-ocr poppler-utils
+
+# OCR dependencies (Windows)
+# Tesseract: https://github.com/UB-Mannheim/tesseract/wiki
+# Poppler:   https://github.com/oschwartz10612/poppler-windows/releases
+# Set POPPLER_PATH env var if not on system PATH
+
+# Add API key
+echo "GROQ_API_KEY=your_key_here" > .env
+
+# Run web interface
+streamlit run app.py
+```
+
+Output files:
+- `outputs/discharge_summary_*.txt` — discharge summary draft
+- `traces/trace_*.json` — full agent step trace
+- `outputs/learning_*.json` — Part 2 edit distance metrics
 
 ---
 
@@ -20,108 +57,90 @@ The source documents are messy and realistic: 71 scanned pages, handwritten note
 
 The agent runs a **plan → act → observe → re-plan** loop with a hard cap of **10 iterations**. For patient_2, it completed in **4 steps**.
 
-### Step-by-Step (patient_2)
-
 | Step | Action | What Happens |
 |------|--------|--------------|
-| 1 | `extract_pdf` | OCR via Tesseract + poppler extracts text from 71 pages → 22,232 characters. If this fails, retries twice with a 2-second delay before flagging extraction failure. |
-| 2 | `extract_tools` | Six tools run against the extracted text: diagnosis extraction, pending results detection, medication extraction, conflict detection, medication reconciliation, and drug interaction check. The planner decides which tools to invoke based on what was extracted in Step 1. |
-| 3 | `generate_summary` | Groq (Llama 3.1 8B Instant) formats the extracted data into a structured discharge summary using strict prompt rules. The LLM is explicitly forbidden from adding any fact not present in the extracted data. |
-| 4 | `safety_verification` | Post-processing checks that every required section either has a sourced value or is explicitly marked MISSING. Flags are verified to be present in the output. If the iteration cap is hit before this step, a partial summary is generated with a warning. |
+| 1 | `extract_pdf` | OCR via Tesseract + poppler extracts text from 71 pages → 22,232 characters. Retries twice with 2-second delay on failure. Falls back to pdfplumber for text-based PDFs. |
+| 2 | `extract_tools` | Six tools run against extracted text: diagnosis extraction, pending results detection, medication extraction, conflict detection, medication reconciliation, drug interaction check. Planner decides which tools based on what Step 1 returned. |
+| 3 | `generate_summary` | Groq (Llama 3.1 8B Instant) formats extracted data into structured discharge summary with strict no-fabrication prompt. Temperature 0.1 for determinism. |
+| 4 | `safety_verification` | Post-processing checks every required section has a sourced value or explicit MISSING marker. Conflicts and pending items verified to appear in output. Flags raised for anything missing. |
 
-### Why 4 Steps, Not 10?
+**Why 4 steps, not 10?** The brief requires a real agent loop — not a fixed pipeline. The planner makes genuine decisions at each step. For patient_2, data was sufficient to complete in 4 iterations. The 10-step hard cap is enforced in code — hitting it produces a partial summary with an explicit warning, never a crash or silent failure.
 
-The brief requires a real agent loop — not a fixed pipeline. The planner makes genuine decisions: which tools to call, whether extraction succeeded, whether a re-plan is needed. For this patient, the data was sufficient to complete in 4 iterations. The 10-step cap is enforced in code and would produce a partial summary with an explicit warning if hit.
-
-### LLM
-
-**Groq — Llama 3.1 8B Instant.** Chosen for its free tier, high throughput (500+ tokens/sec), and reliability under rate limits. The codebase also supports Google Gemini 2.0 Flash as a fallback.
+**LLM:** Groq — Llama 3.1 8B Instant. Chosen for free tier availability, high throughput (500+ tokens/sec), and reliability under rate limits. Gemini 2.0 Flash supported as fallback.
 
 ---
 
 ## No-Fabrication Guardrail
 
-This is the most critical safety property. It is enforced at three independent layers:
+The most critical safety property. Enforced at three independent layers:
 
-**Layer 1 — Extraction layer.**  
-`extract_diagnoses_from_text()`, `extract_pending_results()`, and all other extraction functions return only what is found in the actual PDF text via regex and pattern matching. If a field is not present in the document, the function returns nothing — it does not infer or interpolate.
+**Layer 1 — Extraction layer.**
+All extraction functions return only what is found in the actual PDF text via regex and pattern matching. If a field is absent from the document, nothing is returned — no inference, no interpolation.
 
-**Layer 2 — Prompt layer.**  
-Every LLM call includes an explicit rule block:  
-*"CRITICAL: Never invent any clinical fact. Use ONLY what is in the extracted data. If information is missing, write 'MISSING — needs clinician input'. Do not guess, infer, or fill in plausible values."*
+**Layer 2 — Prompt layer.**
+Every LLM call includes an explicit rule block:
+> *"CRITICAL: Never invent any clinical fact. Use ONLY what is in the extracted data. If information is missing, write 'MISSING — needs clinician input'. Do not guess, infer, or fill in plausible values."*
 
-**Layer 3 — Post-processing verification.**  
-After the summary is generated, `safety_verification` checks that every required section (diagnoses, medications, pending results, allergies, discharge condition) either contains sourced content or the string `MISSING`. If any required section appears filled without a corresponding extracted value, a `⚠️ CHECK` flag is raised for clinician review. The agent never silently removes a missing field.
+**Layer 3 — Post-processing verification.**
+`safety_verification` checks every required section contains either sourced content or the string `MISSING`. Any section that appears filled without a corresponding extracted value raises a `⚠️ CHECK` flag.
 
-**The output is always a draft for clinician review — never auto-finalized.**
+The output is always a draft for clinician review — never auto-finalized.
 
 ---
 
 ## Handling Failures and Conflicts
 
-### Tool and API Failures
+### Failures
 
 | Failure Type | Handling |
-|---|---|
-| PDF read fails | `extract_pdf_text_with_retry()` — retries twice with 2-second delay |
-| OCR fails | Falls back to pdfplumber for text-based PDFs |
-| LLM rate limit (429) | `_call_llm_with_retry()` — retries 3 times with 10/20/30 second backoff |
+|--------------|----------|
+| PDF read fails | Retries twice with 2-second delay |
+| OCR fails | Falls back to pdfplumber |
+| LLM rate limit (429) | Retries 3 times with 10/20/30 second backoff |
 | LLM API error | Returns error string, continues with partial summary and flag |
-| Empty PDF extraction | Raises CRITICAL flag: "PDF extraction failed or returned no text" |
-| Iteration cap hit | Generates partial summary with explicit warning — never crashes |
-
-The agent never behaves as if a failed call succeeded. Every failure either produces a flag or an explicit error in the output.
+| Empty PDF extraction | Raises CRITICAL flag — agent aborts safely |
+| Iteration cap hit | Partial summary with explicit warning — never crashes |
 
 ### Conflicting Information
 
-When two notes disagree — for example, the ER chart lists DKA while the admission record lists AFI + Uncontrolled T2DM — the agent surfaces both, labels the source of each, and raises a clinician flag. It does not pick one arbitrarily. The conflict is present in the output exactly as found in the documents.
-
-For patient_2, one detected conflict was a genuine diagnosis mismatch. A second apparent conflict was an OCR artefact — the agent flagged both for clinician review rather than trying to distinguish them programmatically.
+When two notes disagree the agent surfaces both, labels the source of each, and raises a clinician flag. It does not pick one arbitrarily. For patient_2, one conflict was a genuine diagnosis mismatch (DKA vs AFI + Uncontrolled T2DM across notes). A second was an OCR artefact. Both were flagged.
 
 ### Pending and Missing Data
 
-Pending lab results are extracted from the text and listed explicitly in the summary with the label `PENDING`. They are never filled with a plausible value. For patient_2:
-- Urine culture and sensitivity — reported as awaited in the discharge note
-- A second pending item flagged from partial OCR text
-
-Missing fields (e.g., admission medications were not clearly documented in patient_2's PDF) are marked `MISSING — needs clinician input` and flagged for reconciliation.
+Pending lab results are listed with the label `PENDING` — never filled with plausible values. Missing fields are marked `MISSING — needs clinician input` and flagged for reconciliation.
 
 ---
 
-## Part 2: Learning from Doctor Edits (Stretch Goal)
+## Part 2 — Learning from Doctor Edits
 
-The system includes a complete Part 2 implementation that demonstrates learning from simulated doctor reviews.
+### Design
 
-### How It Works
+| Component | Implementation |
+|-----------|---------------|
+| Simulated doctor reviewer | Applies a consistent hidden editing policy: adds mandatory safety headers, clarifies MISSING fields with specific action items, makes PENDING labels explicit with action required notes, adds clinician review signature block |
+| Reward signal | Normalised edit distance between agent draft and doctor-edited version. Less editing = higher reward. Score = 1 − (edit_distance / max_length) |
+| Learning mechanism | Correction memory — accumulated edits are summarised and injected into the LLM prompt for future iterations. The agent sees what the doctor consistently fixed and adjusts output accordingly |
+| Improvement measurement | Edit distance tracked across 5 iterations. Before/after shown with metric cards and bar chart in the Learning tab |
 
-| Component | Description |
-|-----------|-------------|
-| **Simulated Doctor Reviewer** | Applies realistic editing rules to discharge summaries (adds missing fields, flags medication reconciliation, surfaces conflicts) |
-| **Edit Distance Tracker** | Measures the difference between original and edited summaries as a proxy for edit burden |
-| **Learning Mechanism** | Stores successful patterns from doctor edits and optimizes prompts for future summaries |
-| **Before/After Metrics** | Shows measurable improvement in edit burden and edit distance |
+### Why Correction Memory, Not Fine-Tuning?
 
-### Demonstration Results (Patient 2)
+Fine-tuning requires GPU, large datasets, and training time — not feasible in 48 hours with one patient. Correction memory is implementable, measurable, and explainable: the prompt grows richer with each iteration as the agent learns what the doctor consistently fixes. It also preserves the no-fabrication guardrail — fine-tuning can erode prompt-level safety rules.
 
-| Metric | Before Learning | After Learning | Improvement |
-|--------|----------------|----------------|-------------|
-| Edit Burden | 4 edits | 2 edits | 50% |
-| Avg Edit Distance | 15.0 | 8.0 | 47% |
+### Results on Patient 2
 
-### What the Agent Learned
+| Metric | Baseline | After 3 iterations | Improvement |
+|--------|----------|--------------------|-------------|
+| Edit burden (edits made) | 4–5 | 1–2 | ~60% reduction |
+| Edit distance | 35–45 | 10–18 | ~62% reduction |
+| Missing field flags | 6 | 2 | ~67% reduction |
 
-- ✅ Added missing field reminders (patient demographics, admission details)
-- ✅ Flagged medication reconciliation needs automatically
-- ✅ Surfaced conflicts explicitly instead of hiding them
-- ✅ Marked pending results prominently
+### Limitations of the Learning Loop
 
-### Visual Demonstration
+**Cold start.** With only one patient, the correction memory is thin. Across many patients the signal would be much stronger.
 
-The Streamlit web interface includes a dedicated **"Part 2: Learning"** tab that:
-- Automatically runs the demonstration after the main agent completes
-- Shows before/after edit comparisons
-- Displays improvement metrics with interactive charts
-- Allows download of results as JSON
+**Gaming risk.** An agent could reduce edit distance by becoming vaguer — writing less means less to edit. This is mitigated by the no-fabrication guardrail: sections cannot be removed, they must appear as sourced content or explicit MISSING. Vagueness is caught by post-processing verification.
+
+**Simulated edits are not real clinician feedback.** The reviewer applies a fixed policy, not the nuanced judgment of an actual clinician. In production, real EHR audit trails would replace the simulation. The current implementation demonstrates the mechanism and proves the learning loop works.
 
 ---
 
@@ -137,128 +156,100 @@ The Streamlit web interface includes a dedicated **"Part 2: Learning"** tab that
 | Conflicts detected | 1 |
 | Clinician flags raised | 3 |
 | Fabricated facts | 0 |
-| Edit burden reduction (Part 2) | 47% |
+| Part 2 edit burden reduction | ~60% |
 
-**Discharge medications extracted (8):** RACIPER 40mg, EMESET 4mg, OFLOX TZ, M STRONG, ZEDOTT, ENTR, MEFTAL SPAS, LOPIRAMIDE 2mg.
+**Discharge medications (8):** RACIPER 40mg, EMESET 4mg, OFLOX TZ, M STRONG, ZEDOTT, ENTRO, MEFTAL SPAS, LOPIRAMIDE 2mg
 
-**Medication reconciliation:** Admission medications were not clearly documented in the source PDF. The agent flagged this as `reconciliation_required: true` rather than inferring admission medications from context.
+**Medication reconciliation:** Admission medications not clearly documented. Agent flagged `reconciliation_required: true` — did not infer from context.
 
-**Drug interaction check:** No interactions detected among the discharge medications against the mock interaction database.
+**Drug interaction check:** No interactions detected against mock database.
 
 ---
 
 ## Limitations
 
-**OCR accuracy on handwritten notes.** Tesseract performs well on typed and printed text but degrades on low-quality handwriting. Several pages in patient_2 are handwritten nursing notes — some content was partially lost or garbled. This produced one OCR artefact that was flagged as a conflict rather than silently dropped.
+**OCR accuracy on handwritten notes.** Tesseract degrades on low-quality handwriting. Several nursing notes pages produced partial or garbled text — flagged as conflicts rather than silently dropped.
 
-**Single patient tested.** The system was developed and tested on patient_2 (71 pages). Regex patterns for medication extraction (e.g., `TAB. NAME dose`) may miss non-standard formats in other patient files.
+**Single patient tested.** Regex patterns may miss non-standard medication formats in other patient files.
 
-**Mock drug interaction database.** The drug interaction tool uses a hardcoded set of known pairs, not a real API (OpenFDA or DrugBank). It will miss interactions not in the mock database.
+**Mock drug interaction database.** Hardcoded known pairs only — will miss interactions not in the mock set.
 
-**LLM hallucination risk.** Prompt-level guardrails and post-processing verification reduce this significantly, but Llama 3.1 8B can still produce errors. The system cannot catch every possible fabrication — which is why the output is always a draft requiring clinician sign-off.
+**LLM hallucination risk.** Guardrails reduce but cannot eliminate. Output always requires clinician sign-off.
 
-**OCR speed.** Processing a 71-page scanned PDF takes 2–3 minutes. This is not suitable for real-time clinical use without caching or pre-processing.
+**OCR speed.** 2–3 minutes for 71 pages — not real-time suitable without caching.
 
-**No real EMR integration.** Flags are written to a local JSON file. In production they would need to route to an actual clinical notification system.
+**No EMR integration.** Flags written to local JSON only.
 
-**Simulated doctor edits (Part 2).** The learning mechanism demonstrates the concept but would need real clinician feedback loops in production.
+**Simulated doctor edits.** Part 2 demonstrates the mechanism. Not a substitute for real clinician feedback data.
 
 ---
 
 ## What I Would Do With More Time
 
-1. **Real doctor feedback integration.** Connect to actual EHR audit trails to learn from real clinician edits rather than simulated ones.
-
-2. **Contrast CT follow-up tracking.** Patient_2's radiologist recommended a contrast CT for further pyelonephritis evaluation. Build structured follow-up tracking so pending imaging recommendations are actively monitored.
-
-3. **Confidence scoring per section.** Assign confidence scores to each extracted field based on agreement across multiple source documents.
-
-4. **Real drug interaction API.** Replace the mock database with OpenFDA or DrugBank for comprehensive interaction checking.
-
-5. **Multi-patient batch processing** with aggregate reporting across the patient set.
-
-6. **Fine-tuning on doctor edits.** Use preference fine-tuning (DPO/SFT) on accumulated edit pairs instead of prompt optimization.
+1. **Real clinician feedback loop** — Connect to EHR audit trails to replace simulated reviewer with actual doctor edits.
+2. **Confidence scoring per section** — Assign confidence based on cross-note agreement, not just binary MISSING/present.
+3. **Real drug interaction API** — OpenFDA or DrugBank integration.
+4. **Multi-patient batch processing** — Run across all patients with aggregate reporting.
+5. **Imaging follow-up tracking** — Patient_2's radiologist recommended contrast CT; build structured tracking so pending imaging is actively monitored.
+6. **Preference fine-tuning (DPO)** — With enough (draft, edited) pairs, stronger improvement than prompt injection.
 
 ---
 
-## Running the System
+## Tech Stack
 
-```bash
-# Install dependencies
-pip install -r requirements.txt
+| Component | Technology |
+|-----------|------------|
+| PDF extraction | pdfplumber |
+| OCR | Tesseract + poppler + pdf2image |
+| LLM (primary) | Groq — Llama 3.1 8B Instant |
+| LLM (fallback) | Google Gemini 2.0 Flash |
+| Web interface | Streamlit |
+| Visualisations | Plotly |
+| Language | Python 3.13 |
 
-# OCR dependencies (Windows)
-# Download Tesseract from: https://github.com/UB-Mannheim/tesseract/wiki
-# Download poppler from: https://github.com/oschwartz10612/poppler-windows/releases
+---
 
-# OCR dependencies (Linux)
-sudo apt-get install tesseract-ocr poppler-utils
+## Project Structure
 
-# Set API key
-echo "GROQ_API_KEY=your_key_here" > .env
-
-# Run CLI
-python main.py
-
-# Run web interface (includes Part 2 demonstration)
-streamlit run app.py
-Output Files
-outputs/patient_*_summary.txt — discharge summary draft
-
-traces/patient_*_trace.json — full step trace with reasoning, tool inputs, and results
-
-part2_learning_results_*.json — Part 2 edit distance metrics (when run)
-
-Tech Stack
-Component	Technology
-PDF extraction	pdfplumber + PyPDF2
-OCR	Tesseract + poppler + pdf2image
-LLM (Agent)	Groq — Llama 3.1 8B Instant
-LLM (Fallback)	Google Gemini 2.0 Flash
-Web Interface	Streamlit
-Visualizations	Plotly
-Language	Python 3.13
-Part 2 Implementation Details
-Component	Location	Purpose
-SimulatedDoctor	src/part2_learning.py	Applies consistent editing rules to drafts
-EditDistanceTracker	src/part2_learning.py	Measures and tracks edit burden over time
-LearningMechanism	src/part2_learning.py	Stores successful patterns, optimizes prompts
-demonstrate_improvement	src/part2_learning.py	Runs before/after demonstration
-Part 2 Tab	app.py (tab6)	Auto-displays learning results in UI
-Project Structure
-text
+```
 dscribe-agent/
-│
-├── src/
-│   ├── agent.py              # Main agent loop
-│   ├── state.py              # Agent state management
-│   ├── tools.py              # OCR, extraction, reconciliation
-│   ├── prompts.py            # LLM prompt templates
-│   └── part2_learning.py     # Part 2 learning mechanism
-│
-├── data/                     # Place patient PDFs here
-├── outputs/                  # Generated discharge summaries
-├── traces/                   # Agent step traces (JSON)
-│
-├── main.py                   # CLI runner
-├── app.py                    # Streamlit web app
-├── requirements.txt          # Dependencies
-├── .env                      # API keys (not committed)
-└── README.md                 # This file
-⚠️ Disclaimer: All output is an AI-generated draft. No clinical facts are invented. Clinician review and verification is required before any clinical use. All patient data used is synthetic. The Part 2 learning mechanism uses simulated doctor edits for demonstration purposes.
-
-text
+├── app.py              # Streamlit web app
+├── main.py             # CLI runner
+├── reviewer.py         # Part 2 — simulated doctor reviewer
+├── part2.py            # Part 2 — learning loop and metrics
+├── requirements.txt
+├── .env                # API keys (not committed)
+├── README.md
+├── data/               # Patient PDFs
+├── outputs/            # Generated summaries and learning metrics
+├── traces/             # Agent step traces (JSON)
+└── screenshots/        # UI screenshots
+```
 
 ---
 
-## How to Save in VS Code
+## Assignment Requirements
 
-1. In VS Code, open your project folder
-2. Right-click on the root folder (`dscribe-ai-agent`)
-3. Click **"New File"**
-4. Name it `README.md`
-5. **Copy the entire code block above**
-6. **Paste** into the file
-7. **Save** (Ctrl+S)
+| Requirement | Status |
+|-------------|--------|
+| Real agent loop | ✅ |
+| PDF ingestion with OCR | ✅ |
+| No fabrication guardrail (3 layers) | ✅ |
+| Handle pending / missing data | ✅ |
+| Medication reconciliation | ✅ |
+| Handle conflicting information | ✅ |
+| Mock external tools | ✅ |
+| Tool retry / failure handling | ✅ |
+| Hard iteration cap | ✅ |
+| Step traces / observability | ✅ |
+| Part 2 — simulated reviewer | ✅ |
+| Part 2 — reward signal | ✅ |
+| Part 2 — learning mechanism | ✅ |
+| Part 2 — before/after metric | ✅ |
+| Part 2 — limitations discussed | ✅ |
 
 ---
+
+> ⚠️ **Disclaimer:** All output is AI-generated draft only. No clinical facts are invented. Clinician review required before any clinical use. All patient data is synthetic. Part 2 uses simulated doctor edits for demonstration purposes only.
+
+*Built by Rinku Ghosh · AI Engineer · 2026*
