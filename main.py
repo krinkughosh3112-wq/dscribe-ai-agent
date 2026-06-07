@@ -31,7 +31,7 @@ def main():
         print("   ✅ Please add your patient PDF files to the 'data' folder")
         return
     
-    pdf_files = list(data_folder.glob("*.pdf"))
+    pdf_files = list(data_folder.glob("*.pdf")) + list(data_folder.glob("*.txt"))
     
     if not pdf_files:
         print("❌ No PDF files found in 'data/' folder!")
